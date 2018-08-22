@@ -37,11 +37,13 @@ def main():
             region_name=aws_credential['region_name']
         )
         sqs = aws_session.resource('sqs')
-        google_queue = sqs.get_queue_by_name(QueueName='google')
+        google_queue = sqs.get_queue_by_name(QueueName='google_search')
         ip = requests.get('http://checkip.amazonaws.com').text.rstrip()
 
         # Retrieve AWS AMI.
-        c.execute("select * from aws_ami where ami_name = 'google_consumer'")
+        c.execute("select * from aws_ami "
+                  "where ami_name = 'google_search_consumer' "
+                  "and region_name = '{}'".format(aws_credential['region_name']))
         aws_ami = c.fetchone()
 
         # if it is running in the cloud, switch to headless mode
@@ -61,7 +63,6 @@ def main():
                     google_subquery = json.loads(message[0].body)
                     message[0].delete()
                     incomplete_transaction = True
-                    google_subquery['number_of_pages'] = None
                     driver.get(google_subquery['query_url'])
                     input_google = driver.find_elements_by_id("logo")
                     # if you cannot see Google's logo, you have been blocked
@@ -76,23 +77,12 @@ def main():
                             else:
                                 current_page = None
 
-                            if len(driver.find_elements_by_css_selector('td')) > 0:
-                                if driver.find_elements_by_css_selector('td')[-2].text != '':
-                                    last_page = int(driver.find_elements_by_css_selector('td')[-2].text)
-                                    if google_subquery['number_of_pages'] is None:
-                                        google_subquery['number_of_pages'] = last_page
-                                else:
-                                    last_page = None
-                            else:
-                                last_page = None
-
                             results_current_page = driver.find_elements_by_css_selector('div.rc')
                             for result in results_current_page:
                                 new_result = dict()
                                 new_result['query_alias'] = google_subquery['query_alias']
                                 new_result['query_date'] = google_subquery['query_date']
-                                new_result['current_page'] = current_page
-                                new_result['last_page'] = last_page
+                                new_result['page_number'] = current_page
                                 # initialize the fields that will be populated below
                                 new_result['url'] = None
                                 new_result['title'] = None
@@ -133,8 +123,7 @@ def main():
                                 new_result = dict()
                                 new_result['query_alias'] = google_subquery['query_alias']
                                 new_result['query_date'] = google_subquery['query_date']
-                                new_result['current_page'] = current_page
-                                new_result['last_page'] = last_page
+                                new_result['page_number'] = current_page
                                 # initialize the fields that will be populated below
                                 new_result['url'] = None
                                 new_result['title'] = None
@@ -171,18 +160,15 @@ def main():
                                     blocked = True
                         # if it was not blocked, add search results to database
                         if not blocked:
-                            c.execute("""insert into google_subquery
-                                         (query_alias, query_date, query_url, number_of_pages, success, ip)
-                                         values (%s, %s, %s, %s, %s, %s)""",
-                                      (google_subquery['query_alias'], google_subquery['query_date'],
-                                       google_subquery['query_url'], google_subquery['number_of_pages'],
-                                       True, ip))
+                            c.execute("""insert into google_search_attempt
+                                         (query_alias, query_date, success, ip)
+                                         values (%s, %s, %s, %s)""",
+                                      (google_subquery['query_alias'], google_subquery['query_date'], True, ip))
                             if len(results) != 0:
-                                data_text = ','.join(c.mogrify('(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
+                                data_text = ','.join(c.mogrify('(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)',
                                                                (result['query_alias'],
                                                                 result['query_date'],
-                                                                result['current_page'],
-                                                                result['last_page'],
+                                                                result['page_number'],
                                                                 result['url'],
                                                                 result['title'],
                                                                 result['rank'],
@@ -190,8 +176,8 @@ def main():
                                                                 result['blurb_text'],
                                                                 result['blurb_html'],
                                                                 result['missing'],)).decode('utf-8') for result in results)
-                                c.execute("""insert into google_result
-                                             (query_alias, query_date, current_page, last_page,
+                                c.execute("""insert into google_search_result
+                                             (query_alias, query_date, page_number,
                                              url, title, rank, date, blurb_text, blurb_html, missing)
                                              values """ + data_text)
                             conn.commit()
@@ -201,11 +187,10 @@ def main():
                 google_queue.send_message(MessageBody=json.dumps(google_subquery))
                 incomplete_transaction = False
                 # add record indicating google blocked requests
-                c.execute("""insert into google_subquery
-                             (query_alias, query_date, query_url, number_of_pages, success, ip)
-                             values (%s, %s, %s, %s, %s, %s)""",
+                c.execute("""insert into google_search_attempt
+                             (query_alias, query_date, success, ip)
+                             values (%s, %s, %s, %s)""",
                           (google_subquery['query_alias'], google_subquery['query_date'],
-                           google_subquery['query_url'], google_subquery['number_of_pages'],
                            False, ip))
                 conn.commit()
                 # start a new server
@@ -218,9 +203,10 @@ def main():
                                      MaxCount=1,
                                      MinCount=1)
     except Exception:
+        conn.rollback()
         # add record indicating error.
         c.execute("insert into error (current_record, error, module, ip) VALUES (%s, %s, %s, %s)",
-                  (json.dumps(google_subquery), traceback.format_exc(), 'google_consumer', ip), )
+                  (json.dumps(google_subquery), traceback.format_exc(), 'google_search_consumer', ip), )
         conn.commit()
         # return URL to queue
         if incomplete_transaction:
