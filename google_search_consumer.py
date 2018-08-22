@@ -77,7 +77,7 @@ def main():
                             else:
                                 current_page = None
 
-                            results_current_page = driver.find_elements_by_css_selector('div.rc')
+                            results_current_page = driver.find_elements_by_css_selector('div.srg')
                             for result in results_current_page:
                                 new_result = dict()
                                 new_result['query_alias'] = google_subquery['query_alias']
