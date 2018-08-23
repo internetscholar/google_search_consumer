@@ -27,24 +27,25 @@ def main():
     google_subquery = None
     incomplete_transaction = False
     ip = None
-    try:
-        # Retrieve AWS credentials and connect to Simple Queue Service (SQS).
-        c.execute("select * from aws_credentials")
-        aws_credential = c.fetchone()
-        aws_session = boto3.Session(
-            aws_access_key_id=aws_credential['aws_access_key_id'],
-            aws_secret_access_key=aws_credential['aws_secret_access_key'],
-            region_name=aws_credential['region_name']
-        )
-        sqs = aws_session.resource('sqs')
-        google_queue = sqs.get_queue_by_name(QueueName='google_search')
-        ip = requests.get('http://checkip.amazonaws.com').text.rstrip()
 
-        # Retrieve AWS AMI.
-        c.execute("select * from aws_ami "
-                  "where ami_name = 'google_search_consumer' "
-                  "and region_name = '{}'".format(aws_credential['region_name']))
-        aws_ami = c.fetchone()
+    # Retrieve AWS credentials and connect to Simple Queue Service (SQS).
+    c.execute("select * from aws_credentials")
+    aws_credential = c.fetchone()
+    aws_session = boto3.Session(
+        aws_access_key_id=aws_credential['aws_access_key_id'],
+        aws_secret_access_key=aws_credential['aws_secret_access_key'],
+        region_name=aws_credential['region_name']
+    )
+    sqs = aws_session.resource('sqs')
+    google_queue = sqs.get_queue_by_name(QueueName='google_search')
+    # Retrieve AWS AMI.
+    c.execute("select * from aws_ami "
+              "where ami_name = 'google_search_consumer' "
+              "and region_name = '{}'".format(aws_credential['region_name']))
+    aws_ami = c.fetchone()
+
+    try:
+        ip = requests.get('http://checkip.amazonaws.com').text.rstrip()
 
         # if it is running in the cloud, switch to headless mode
         options = Options()
@@ -77,7 +78,7 @@ def main():
                             else:
                                 current_page = None
 
-                            results_current_page = driver.find_elements_by_css_selector('div.srg')
+                            results_current_page = driver.find_elements_by_css_selector('div.srg div.rc')
                             for result in results_current_page:
                                 new_result = dict()
                                 new_result['query_alias'] = google_subquery['query_alias']
@@ -175,11 +176,12 @@ def main():
                                                                 result['date'],
                                                                 result['blurb_text'],
                                                                 result['blurb_html'],
-                                                                result['missing'],)).decode('utf-8') for result in results)
+                                                                result['missing'],)).decode('utf-8')
+                                                     for result in results)
                                 c.execute("""insert into google_search_result
                                              (query_alias, query_date, page_number,
                                              url, title, rank, date, blurb_text, blurb_html, missing)
-                                             values """ + data_text)
+                                             values {}""".format(data_text))
                             conn.commit()
                             incomplete_transaction = False
             if blocked:
