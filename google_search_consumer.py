@@ -13,13 +13,15 @@ from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
 import requests
 
+# todo: add a new field to google_search_result to differentiate search results in the carousel.
+
 
 def main():
     # Connect to Postgres server.
     config = configparser.ConfigParser()
     config.read(os.path.join(os.path.dirname(__file__), 'config.ini'))
     conn = psycopg2.connect(host=config['database']['host'],
-                            dbname=config['database']['dbname'],
+                            dbname=config['database']['db_name'],
                             user=config['database']['user'],
                             password=config['database']['password'])
     c = conn.cursor(cursor_factory=extras.RealDictCursor)
@@ -223,7 +225,8 @@ def main():
                              MaxCount=1,
                              MinCount=1)
         raise
-    conn.close()
+    finally:
+        conn.close()
 
 
 if __name__ == '__main__':
